@@ -12,6 +12,7 @@ import ar.ive.spec.security.CredentialInvalidException;
 import ar.ive.spec.security.CredentialVerifier;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -182,6 +183,59 @@ class CredentialGuardTest {
         IllegalStateException e = assertThrows(IllegalStateException.class,
                 () -> DeploymentChoice.check(false, "open", "the gateway", List.of("pets:admin"), "a verifier", "a reason"));
         assertTrue(e.getMessage().contains("pets:admin"));
+    }
+
+    // --- the permission translation ---------------------------------------------
+
+    private static Caller withScopes(String... scopes) {
+        return Caller.of(Map.of("sub", "ana", Caller.SCOPES, List.of(scopes)));
+    }
+
+    @Test
+    void aTargetTheCatalogDoesNotDeclareDoesNotStart() {
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> PermissionTranslation.check(
+                List.of("pets:read"), PermissionTranslation.of(Map.of("GG-PETS", List.of("pets:reed")))));
+        assertTrue(e.getMessage().contains("pets:reed"));
+    }
+
+    @Test
+    void anEmptyMapIsNoTable() {
+        PermissionTranslation empty = PermissionTranslation.of(Map.of());
+        assertTrue(PermissionTranslation.check(List.of("pets:read"), empty).contains("no translation table"));
+        assertTrue(PermissionTranslation.check(List.of("pets:read"), null).contains("no translation table"));
+        assertEquals(List.of("x"), PermissionTranslation.translate(withScopes("x"), empty).scopes());
+    }
+
+    @Test
+    void theStoreNamesBecomeTheCatalogs() {
+        List<String> logged = new ArrayList<>();
+        PermissionTranslation table = PermissionTranslation.of(Map.of("GG-PETS", List.of("pets:read"))).withLog(logged::add);
+        assertTrue(PermissionTranslation.check(List.of("pets:read"), table).contains("1 equivalence"));
+        assertEquals(List.of("pets:read"), PermissionTranslation.translate(withScopes("GG-PETS", "other"), table).scopes());
+        assertEquals(List.of(), PermissionTranslation.translate(withScopes("other"), table).scopes());
+        assertEquals(1, logged.size(), "what did not match is reported on the server side");
+        assertEquals(List.of("pets:read", "other"),
+                PermissionTranslation.translate(withScopes("GG-PETS", "other"), table.withPassthrough(true)).scopes());
+    }
+
+    @Test
+    void aPermissionNobodyReachesIsOnlyWarned() {
+        String notice = PermissionTranslation.check(List.of("pets:read", "pets:admin"),
+                PermissionTranslation.of(Map.of("GG-PETS", List.of("pets:read"))));
+        assertTrue(notice.contains("nothing grants pets:admin"), notice);
+    }
+
+    @Test
+    void theGuardTranslatesWhatTheVerifierReturned() throws Exception {
+        CredentialVerifier directory = credential ->
+                Map.of("sub", "ana", Caller.SCOPES, List.of("CN=Pets Admins,OU=Groups"));
+        PermissionTranslation table = PermissionTranslation.of(Map.of("CN=Pets Admins,OU=Groups", List.of("pets:admin")));
+        CredentialGuard guard = new CredentialGuard(() -> directory, INCLUDES, null, null,
+                caller -> PermissionTranslation.translate(caller, table));
+        Caller caller = guard.identify("good", Map.of());
+        assertEquals(List.of("pets:admin"), caller.scopes());
+        assertEquals("ana", caller.claims().get("sub"), "the other claims are kept");
+        guard.requirePermissions(caller, List.of("pets:read"));
     }
 
     // --- the rate limit ----------------------------------------------------------

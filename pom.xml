@@ -10,7 +10,7 @@
 	</parent>
 	<groupId>ar.ive.spec</groupId>
 	<artifactId>ive-security</artifactId>
-	<version>1.0.0</version>
+	<version>1.0.1</version>
 	<name/>
 	<description>The IVE credential and permission guard: the catalog's security requirements and their mechanics, without a web framework.</description>
 	<url/>

@@ -19,6 +19,7 @@ import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 
 /**
  * Enforces {@code authentication} and {@code authorization} for one
@@ -46,6 +47,18 @@ public final class CredentialGuard {
     private final Map<String, List<String>> includes;
     private final String withoutIdentity;
     private final BiFunction<String, String, Guidance> guide;
+    private final UnaryOperator<Caller> translate;
+
+    /**
+     * The guard with no permission translation: the names the verifier
+     * returns are the catalog's. See the five-argument constructor.
+     */
+    public CredentialGuard(Supplier<? extends CredentialVerifier> verifier,
+                           Map<String, ? extends Collection<String>> includes,
+                           String withoutIdentity,
+                           BiFunction<String, String, Guidance> guide) {
+        this(verifier, includes, withoutIdentity, guide, null);
+    }
 
     /**
      * @param verifier        gives the deployment's verifier, or {@code null}
@@ -60,11 +73,16 @@ public final class CredentialGuard {
      *                        with {@link DeploymentChoice#check}.
      * @param guide           how a cause's message is looked up
      *                        ({@link SecurityFailures#CATALOG_GUIDE} when null)
+     * @param translate       applied to what the verifier returned, or
+     *                        {@code null}: the permission translation table,
+     *                        {@code caller -> PermissionTranslation.translate(caller, table)}
      */
     public CredentialGuard(Supplier<? extends CredentialVerifier> verifier,
                            Map<String, ? extends Collection<String>> includes,
                            String withoutIdentity,
-                           BiFunction<String, String, Guidance> guide) {
+                           BiFunction<String, String, Guidance> guide,
+                           UnaryOperator<Caller> translate) {
+        this.translate = translate;
         this.verifier = verifier == null ? () -> null : verifier;
         Map<String, List<String>> copy = new LinkedHashMap<>();
         if (includes != null) {
@@ -115,7 +133,10 @@ public final class CredentialGuard {
         try {
             Map<String, Object> claims = current.verify(credential == null ? "" : credential,
                     headers == null ? Map.of() : headers);
-            return Caller.of(claims);
+            Caller caller = Caller.of(claims);
+            // TRANSLATED HERE AND NOT WHEN CHECKING: from this point on all
+            // the code sees the catalog's names.
+            return translate == null ? caller : translate.apply(caller);
         } catch (CredentialExpiredException expired) {
             throw SecurityFailures.unauthorized(Conditions.CREDENTIAL_EXPIRED,
                     messageOr(expired, "The credential expired"), guide);
